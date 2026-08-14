@@ -1,0 +1,41 @@
+# ==========================================
+# .NET / ASP.NET Core
+# ==========================================
+bin/
+obj/
+*.user
+*.suo
+.vs/
+*.nupkg
+*.snupkg
+*.log
+project.lock.json
+artifacts/
+
+# ==========================================
+# Node / Frontend
+# ==========================================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+dist/
+dist-ssr/
+*.local
+.vite/
+
+# ==========================================
+# Environment & Secrets
+# ==========================================
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+appsettings.Development.json
+
+# ==========================================
+# OS
+# ==========================================
+.DS_Store
+Thumbs.db
+desktop.ini
