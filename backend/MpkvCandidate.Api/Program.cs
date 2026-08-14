@@ -100,7 +100,20 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseCors("ReactApp");
-app.UseStaticFiles();
+// Serve static files (wwwroot/uploads) with CORS headers so the React frontend
+// on localhost:5173 can load photos and signatures directly from localhost:7001
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = ctx =>
+    {
+        var origin = ctx.Context.Request.Headers["Origin"].ToString();
+        if (!string.IsNullOrEmpty(origin))
+        {
+            ctx.Context.Response.Headers["Access-Control-Allow-Origin"]      = origin;
+            ctx.Context.Response.Headers["Access-Control-Allow-Credentials"] = "true";
+        }
+    }
+});
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();

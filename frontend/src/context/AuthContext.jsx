@@ -30,10 +30,12 @@ export function AuthProvider({ children }) {
     localStorage.setItem('mpkv_user',  JSON.stringify(userValue))
   }
 
-  // Update specific user fields (e.g. photoPath after upload) without re-login
+  // Update specific user fields (e.g. photoPath after upload) without re-login.
+  // Guards against prev being null (can happen if called before localStorage hydration).
   const updateUser = (fields) => {
     setUser(prev => {
-      const updated = { ...prev, ...fields }
+      const base    = prev ?? {}                    // never spread null
+      const updated = { ...base, ...fields }
       localStorage.setItem('mpkv_user', JSON.stringify(updated))
       return updated
     })

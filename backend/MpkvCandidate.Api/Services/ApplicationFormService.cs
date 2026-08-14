@@ -962,8 +962,8 @@ namespace MpkvCandidate.Api.Services
                 if (row["CandidateID"] == DBNull.Value || Convert.ToInt64(row["CandidateID"]) == 0)
                     return response;
                 response.Found            = true;
-                response.PhotoUploadedURL = row["PhotoUploadedURL"]?.ToString() ?? "";
-                response.SignUploadedURL  = row["SignUploadedURL"]?.ToString()  ?? "";
+                response.PhotoUploadedURL = ExtractBlobUrl(row["PhotoUploadedURL"]?.ToString() ?? "");
+                response.SignUploadedURL  = ExtractBlobUrl(row["SignUploadedURL"]?.ToString()  ?? "");
                 response.BothUploaded     = response.PhotoUploadedURL.Length > 0 && response.SignUploadedURL.Length > 0;
             }
             catch (Exception ex) { Console.WriteLine($"GetPhotoSignDetails error: {ex.Message}"); }
@@ -1004,13 +1004,13 @@ namespace MpkvCandidate.Api.Services
                     getParam.Add("@PageCode",    "UploadPhotoAndSign");
                     var existDt = _db.GetDataTable("ApplicationForm_GetPhotoAndSignDetails", getParam);
                     if (existDt != null && existDt.Rows.Count > 0)
-                        existingSign = existDt.Rows[0]["SignUploadedURL"]?.ToString() ?? "";
+                        existingSign = ExtractBlobUrl(existDt.Rows[0]["SignUploadedURL"]?.ToString() ?? "");
                 } catch { /* use empty if fetch fails */ }
 
                 var param = new DynamicParameters();
                 param.Add("@CandidateID",      candidateId);
                 param.Add("@PhotoUploadedURL", url);
-                param.Add("@SignUploadedURL",   existingSign);   // preserve existing sign URL
+                param.Add("@SignUploadedURL",   existingSign);
                 param.Add("@UserLoginID",       userLoginId);
                 param.Add("@IPAddress",         ipAddress);
                 param.Add("@PageCode",          "UploadPhotoAndSign");
@@ -1057,7 +1057,7 @@ namespace MpkvCandidate.Api.Services
                     getParam.Add("@PageCode",    "UploadPhotoAndSign");
                     var existDt = _db.GetDataTable("ApplicationForm_GetPhotoAndSignDetails", getParam);
                     if (existDt != null && existDt.Rows.Count > 0)
-                        existingPhoto = existDt.Rows[0]["PhotoUploadedURL"]?.ToString() ?? "";
+                        existingPhoto = ExtractBlobUrl(existDt.Rows[0]["PhotoUploadedURL"]?.ToString() ?? "");
                 } catch { /* use empty if fetch fails */ }
 
                 var param = new DynamicParameters();
@@ -1104,28 +1104,105 @@ namespace MpkvCandidate.Api.Services
             }
         }
 
+        // ══════════════════════════════════════════════════════════════════════
+        // ExtractBlobUrl — strips the legacy ASP.NET ViewFile.aspx wrapper
+        // that the old project stored around Azure Blob URLs.
+        //
+        // The SP wraps URLs on the way OUT like:
+        //   ../Public/ViewFile.aspx?FileName=Photograph&FileURL=https://blob...jpg
+        //
+        // We need the raw blob URL: https://blobstorage2.blob.core.windows.net/...
+        // This handles double-wrapping too (ViewFile.aspx?...FileURL=ViewFile.aspx?...FileURL=https://...)
+        // ══════════════════════════════════════════════════════════════════════
+        private static string ExtractBlobUrl(string url)
+        {
+            if (string.IsNullOrWhiteSpace(url)) return "";
+
+            // Keep extracting until no more ViewFile.aspx wrapper remains
+            var current = url;
+            while (current.Contains("ViewFile.aspx") && current.Contains("FileURL="))
+            {
+                var idx = current.IndexOf("FileURL=", StringComparison.OrdinalIgnoreCase);
+                if (idx < 0) break;
+                var extracted = current.Substring(idx + "FileURL=".Length);
+                // URL-decode in case it was encoded
+                extracted = Uri.UnescapeDataString(extracted);
+                // Stop if we haven't made progress
+                if (extracted == current) break;
+                current = extracted;
+            }
+
+            return current;
+        }
+
+        // ══════════════════════════════════════════════════════════════════════
+        // UploadToBlob — mirrors Helper.UploadFilesToBlob() from legacy project
+        //
+        // Uploads to Azure Blob Storage (same account/container as old project).
+        // Path inside container: {FileProject}/{subfolder}/{candidateId}_{suffix}_{guid}.{ext}
+        //   e.g. jceceb container → 2026_mpkv_rahuri_uat/photograph/12345_p_abc123.jpg
+        //
+        // Returns full public URL:
+        //   https://blobstorage2.blob.core.windows.net/jceceb/2026_mpkv_rahuri_uat/photograph/12345_p_abc123.jpg
+        //
+        // Falls back to local wwwroot/uploads only when StorageConnectionString is missing.
+        // ══════════════════════════════════════════════════════════════════════
         private async Task<string> UploadToBlob(
             IFormFile file, long candidateId, string subfolder, string suffix)
         {
             try
             {
-                var ext      = Path.GetExtension(file.FileName).ToLower();
-                var fileName = $"{candidateId}_{suffix}{ext}";
+                var ext      = Path.GetExtension(file.FileName).ToLower();   // ".jpg"
+                var guid     = Guid.NewGuid().ToString("N");                  // 32-char hex, no dashes
+                var fileName = $"{candidateId}_{suffix}_{guid}{ext}";         // e.g. 12345_p_abc123def456.jpg
 
-                var folder = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "uploads", subfolder);
+                var storageConn = _config["AzureBlob:StorageConnectionString"] ?? "";
+                var container   = _config["AzureBlob:FileMainContainer"]       ?? "";
+                var fileProject = _config["AzureBlob:FileProject"]             ?? "";
+                var storageUrl  = _config["AzureBlob:StorageURL"]              ?? "";
+
+                // ── Azure Blob upload (always when credentials configured) ────
+                if (!string.IsNullOrWhiteSpace(storageConn) &&
+                    !string.IsNullOrWhiteSpace(container)   &&
+                    !string.IsNullOrWhiteSpace(fileProject) &&
+                    !string.IsNullOrWhiteSpace(storageUrl))
+                {
+                    // Blob path mirrors legacy dicContainers: {fileProject}/{subfolder}/{filename}
+                    var blobPath = $"{fileProject}/{subfolder}/{fileName}";
+
+                    var blobServiceClient = new BlobServiceClient(storageConn);
+                    var containerClient   = blobServiceClient.GetBlobContainerClient(container.ToLower());
+                    await containerClient.CreateIfNotExistsAsync();
+
+                    var blobClient = containerClient.GetBlobClient(blobPath);
+                    using (var ms = new MemoryStream())
+                    {
+                        await file.CopyToAsync(ms);
+                        ms.Position = 0;
+                        await blobClient.UploadAsync(ms, overwrite: true);
+                    }
+
+                    // Full URL — same format as legacy cloudBlockBlob.Uri.ToString()
+                    var url = $"{storageUrl.TrimEnd('/')}/{container.ToLower()}/{blobPath}";
+                    Console.WriteLine($"[UploadToBlob] Azure → {url}");
+                    return url;
+                }
+
+                // ── Local fallback (only when Azure config is absent) ─────────
+                var folder   = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "uploads", subfolder);
                 Directory.CreateDirectory(folder);
-
                 var filePath = Path.Combine(folder, fileName);
-                using var stream = new FileStream(filePath, FileMode.Create, FileAccess.Write);
-                await file.CopyToAsync(stream);
-
-                var url = $"/uploads/{subfolder}/{fileName}";
-                Console.WriteLine($"File saved: {filePath}  →  URL: {url}");
-                return url;
+                using (var stream = new FileStream(filePath, FileMode.Create, FileAccess.Write))
+                {
+                    await file.CopyToAsync(stream);
+                }
+                var localUrl = $"/uploads/{subfolder}/{fileName}";
+                Console.WriteLine($"[UploadToBlob] Local fallback → {localUrl}");
+                return localUrl;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"UploadToBlob error: {ex.Message}");
+                Console.WriteLine($"[UploadToBlob] Error: {ex.Message}");
                 return "";
             }
         }
