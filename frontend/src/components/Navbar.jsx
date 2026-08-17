@@ -68,21 +68,6 @@ export default function Navbar() {
     window.location.replace('/')
   }
 
-  // Resolve photo URL — handles 3 formats stored in DB:
-  // 1. Clean https:// Azure Blob URL → use directly
-  // 2. Legacy ../Public/ViewFile.aspx?...FileURL=https://... → extract FileURL param
-  // 3. Local /uploads/... → prefix with backend origin
-  const resolvePhotoUrl = (url) => {
-    if (!url) return '/dummy-user.png'
-    if (url.includes('ViewFile.aspx') && url.includes('FileURL=')) {
-      const match = url.match(/FileURL=([^&]+)/)
-      if (match?.[1]) return decodeURIComponent(match[1])
-    }
-    if (url.startsWith('http')) return url
-    const backend = window.location.port === '5173' ? 'http://localhost:7001' : ''
-    return `${backend}${url}`
-  }
-
   const toggleDropdown = key =>
     setOpenDropdown(prev => prev === key ? null : key)
 
@@ -196,7 +181,9 @@ export default function Navbar() {
               style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
             >
               <img
-                src={resolvePhotoUrl(user?.photoPath)}
+                src={user?.photoPath
+                  ? (user.photoPath.startsWith('http') ? user.photoPath : `http://localhost:7001${user.photoPath}`)
+                  : '/dummy-user.png'}
                 alt="Candidate"
                 style={{
                   width: 80, height: 80, borderRadius: '50%',

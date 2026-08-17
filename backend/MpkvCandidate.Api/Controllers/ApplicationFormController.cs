@@ -479,5 +479,106 @@ namespace MpkvCandidate.Api.Controllers
             var result = _appFormService.SaveQualificationDetails(c, GetUserLoginId(), GetIpAddress(), request);
             return result.Success ? Ok(result) : BadRequest(result);
         }
+
+        // ══════════════════════════════════════════════════════════════════════
+        // DOCUMENTS — list
+        // GET /api/applicationform/documents
+        // ══════════════════════════════════════════════════════════════════════
+        [HttpGet("documents")]
+        public IActionResult GetDocuments()
+        {
+            var c = GetCandidateId(); if (c <= 0) return Unauthorized();
+            return Ok(_appFormService.GetDocumentsList(c, GetUserLoginId()));
+        }
+
+        // ══════════════════════════════════════════════════════════════════════
+        // DOCUMENTS — upload
+        // POST /api/applicationform/documents/upload  (multipart/form-data)
+        // ══════════════════════════════════════════════════════════════════════
+        [HttpPost("documents/upload")]
+        [RequestSizeLimit(10 * 1024 * 1024)]   // 10MB max
+        public async Task<IActionResult> UploadDocument(
+            [FromForm] int documentId,
+            [FromForm] string? documentNo,
+            [FromForm] string? documentIssueDate,
+            [FromForm] IFormFile? file)
+        {
+            if (file == null || file.Length == 0)
+                return BadRequest(new UploadDocumentResponse { Success = false, Message = "Please select a file to upload." });
+            var c = GetCandidateId(); if (c <= 0) return Unauthorized();
+            var request = new UploadDocumentRequest
+            {
+                DocumentID        = documentId,
+                DocumentNo        = documentNo        ?? "",
+                DocumentIssueDate = documentIssueDate ?? "",
+            };
+            var result = await _appFormService.UploadDocument(c, GetUserLoginId(), GetIpAddress(), request, file);
+            return result.Success ? Ok(result) : BadRequest(result);
+        }
+
+        // ══════════════════════════════════════════════════════════════════════
+        // DOCUMENTS — delete
+        // DELETE /api/applicationform/documents/delete/{documentId}
+        // ══════════════════════════════════════════════════════════════════════
+        [HttpDelete("documents/delete/{documentId}")]
+        public IActionResult DeleteDocument(int documentId)
+        {
+            var c = GetCandidateId(); if (c <= 0) return Unauthorized();
+            var result = _appFormService.DeleteDocument(c, GetUserLoginId(), GetIpAddress(), documentId);
+            return result.Success ? Ok(result) : BadRequest(result);
+        }
+
+        // ══════════════════════════════════════════════════════════════════════
+        // DOCUMENTS — save (proceed)
+        // POST /api/applicationform/documents/save
+        // ══════════════════════════════════════════════════════════════════════
+        [HttpPost("documents/save")]
+        public IActionResult SaveDocuments()
+        {
+            var c = GetCandidateId(); if (c <= 0) return Unauthorized();
+            var result = _appFormService.SaveDocuments(c, GetUserLoginId(), GetIpAddress());
+            return result.Success ? Ok(result) : BadRequest(result);
+        }
+
+        // ══════════════════════════════════════════════════════════════════════
+        // FEE — load details
+        // GET /api/applicationform/fee
+        // Mirrors: Page_Load → GetApplicationFee() + CheckFailedTransactions()
+        // ══════════════════════════════════════════════════════════════════════
+        [HttpGet("fee")]
+        public IActionResult GetFee()
+        {
+            var c = GetCandidateId(); if (c <= 0) return Unauthorized();
+            var result = _appFormService.GetFeeDetails(c, GetUserLoginId());
+            return result.Success ? Ok(result) : BadRequest(result);
+        }
+
+        // ══════════════════════════════════════════════════════════════════════
+        // FEE — initiate gateway transaction (fee > 0)
+        // POST /api/applicationform/fee/initiate
+        // Mirrors: btnPay_Click → FeeWorker.SetFeeTransaction()
+        // ══════════════════════════════════════════════════════════════════════
+        [HttpPost("fee/initiate")]
+        public IActionResult InitiateFee([FromBody] FeeInitiateRequest request)
+        {
+            var c = GetCandidateId(); if (c <= 0) return Unauthorized();
+            if (request == null || request.PaymentGatewayID <= 0)
+                return BadRequest(new FeeInitiateResponse { Success = false, Message = "Please select a payment gateway." });
+            var result = _appFormService.InitiateFeeTransaction(c, GetUserLoginId(), GetIpAddress(), request.PaymentGatewayID);
+            return result.Success ? Ok(result) : BadRequest(result);
+        }
+
+        // ══════════════════════════════════════════════════════════════════════
+        // FEE — proceed without payment (fee = 0 or already paid)
+        // POST /api/applicationform/fee/proceed
+        // Mirrors: btnProceed_Click → SaveApplicationFeeDetails()
+        // ══════════════════════════════════════════════════════════════════════
+        [HttpPost("fee/proceed")]
+        public IActionResult ProceedFee()
+        {
+            var c = GetCandidateId(); if (c <= 0) return Unauthorized();
+            var result = _appFormService.SaveFeeDetails(c, GetUserLoginId(), GetIpAddress());
+            return result.Success ? Ok(result) : BadRequest(result);
+        }
     }
 }

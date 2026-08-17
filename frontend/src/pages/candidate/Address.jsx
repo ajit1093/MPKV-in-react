@@ -36,7 +36,7 @@ export default function Address() {
     stateID: '27', districtID: '', city: '', pincode: ''
   })
 
-  // Permanent address
+ 
   const [perm, setPerm] = useState({
     addressLine1: '', addressLine2: '',
     stateID: '27', districtID: '', city: '', pincode: ''

@@ -1,41 +1,39 @@
-# ==========================================
-# .NET / ASP.NET Core
-# ==========================================
-bin/
-obj/
+# Visual Studio
+.vs/
 *.user
 *.suo
-.vs/
+*.userosscache
+*.sln.docstates
+
+# .NET build output
+bin/
+obj/
+
+# NuGet
 *.nupkg
-*.snupkg
-*.log
+packages/
 project.lock.json
+project.fragment.lock.json
 artifacts/
 
-# ==========================================
-# Node / Frontend
-# ==========================================
+# Node / frontend
 node_modules/
+dist/
+.pnp/
+.pnp.js
 npm-debug.log*
 yarn-debug.log*
-dist/
-dist-ssr/
-*.local
-.vite/
+yarn-error.log*
 
-# ==========================================
-# Environment & Secrets
-# ==========================================
+# Env / secrets
 .env
 .env.local
-.env.development.local
-.env.test.local
-.env.production.local
+.env.*.local
 appsettings.Development.json
 
-# ==========================================
 # OS
-# ==========================================
-.DS_Store
 Thumbs.db
-desktop.ini
+.DS_Store
+
+# The MPKV-in-react subfolder is a separate git repo — exclude it
+MPKV-in-react/

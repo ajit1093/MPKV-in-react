@@ -10,13 +10,6 @@ export default defineConfig({
         target: 'http://localhost:7001',
         changeOrigin: true,
         secure: false
-      },
-      // Proxy static file uploads (photos, signatures, documents) through Vite
-      // so the browser loads them from the same origin — avoids CORS on localhost
-      '/uploads': {
-        target: 'http://localhost:7001',
-        changeOrigin: true,
-        secure: false
       }
     }
   }

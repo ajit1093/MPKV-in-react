@@ -386,4 +386,122 @@ namespace MpkvCandidate.Api.Models
         public string Message { get; set; } = string.Empty;
     }
 
+    // ══════════════════════════════════════════════════════════════════════════
+    // REQUIRED DOCUMENTS — mirrors RequiredDocumentEntity + UploadRequiredDocuments.aspx
+    // ══════════════════════════════════════════════════════════════════════════
+
+    public class RequiredDocumentDto
+    {
+        public int    DocumentID           { get; set; }
+        public string DocumentName         { get; set; } = string.Empty;
+        /// <summary>1 = Compulsory, 0 = Optional — mirrors IsCompulsory</summary>
+        public short  IsCompulsory         { get; set; }
+        public string DocumentUploadedURL  { get; set; } = string.Empty;
+        /// <summary>e.g. "pdf,jpg" — from DB per document</summary>
+        public string FileTypesAllowed     { get; set; } = string.Empty;
+        /// <summary>Max size in KB — from DB per document</summary>
+        public int    MaxFileSizeAllowed   { get; set; }
+        /// <summary>1 = all compulsory uploaded — mirrors IsAllCompulsoryDocumentsUploaded</summary>
+        public short  IsAllCompulsoryDocumentsUploaded { get; set; }
+        /// <summary>True = show DocumentNo + DocumentIssueDate fields in upload modal</summary>
+        public bool   RequiresDocumentDetails { get; set; }
+    }
+
+    public class DocumentsListResponse
+    {
+        public List<RequiredDocumentDto> Documents       { get; set; } = new();
+        public int                       TotalMandatory  { get; set; }
+        public int                       UploadedMandatory { get; set; }
+        public bool                      AllCompulsoryUploaded { get; set; }
+    }
+
+    public class UploadDocumentRequest
+    {
+        public int    DocumentID        { get; set; }
+        public string DocumentNo        { get; set; } = string.Empty;
+        public string DocumentIssueDate { get; set; } = string.Empty;   // dd/MM/yyyy
+    }
+
+    public class UploadDocumentResponse
+    {
+        public bool   Success { get; set; }
+        public string Message { get; set; } = string.Empty;
+        public string UploadedURL { get; set; } = string.Empty;
+    }
+
+    public class DeleteDocumentRequest
+    {
+        public int DocumentID { get; set; }
+    }
+
+    public class DocumentActionResponse
+    {
+        public bool   Success { get; set; }
+        public string Message { get; set; } = string.Empty;
+    }
+
+    public class SaveDocumentsResponse
+    {
+        public bool   Success { get; set; }
+        public string Message { get; set; } = string.Empty;
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // FEE — mirrors ApplicationFeeEntity + PayApplicationFee.aspx
+    // SP: ApplicationForm_GetApplicationFeeDetails
+    // ══════════════════════════════════════════════════════════════════════════
+
+    public class ApplicationFeeDto
+    {
+        public long    CandidateID      { get; set; }
+        public string  ApplicationID    { get; set; } = string.Empty;
+        public string  CandidateName    { get; set; } = string.Empty;
+        public string  AppliedCourse    { get; set; } = string.Empty;
+        public string  Gender           { get; set; } = string.Empty;
+        public string  Category         { get; set; } = string.Empty;
+        public string  IsPWD            { get; set; } = string.Empty;
+        public int     FeeToBePaid      { get; set; }
+        public int     FeeAlreadyPaid   { get; set; }
+        public int     RemainingFee     { get; set; }
+        public int     PhaseID          { get; set; }
+        public string  Purpose          { get; set; } = string.Empty;
+        /// <summary>List of payment gateway options from master table</summary>
+        public List<PaymentGatewayOption> PaymentGateways { get; set; } = new();
+    }
+
+    public class PaymentGatewayOption
+    {
+        public int    PaymentGatewayID   { get; set; }
+        public string PaymentGatewayName { get; set; } = string.Empty;
+    }
+
+    public class FeeDetailsResponse
+    {
+        public bool              Success { get; set; }
+        public string            Message { get; set; } = string.Empty;
+        public ApplicationFeeDto Fee     { get; set; } = new();
+    }
+
+    /// <summary>Request body for POST /api/applicationform/fee/initiate</summary>
+    public class FeeInitiateRequest
+    {
+        public int PaymentGatewayID { get; set; }
+    }
+
+    /// <summary>Response from POST /api/applicationform/fee/initiate</summary>
+    public class FeeInitiateResponse
+    {
+        public bool   Success            { get; set; }
+        public string Message            { get; set; } = string.Empty;
+        public long   TransactionID      { get; set; }
+        public string PaymentGatewayURL  { get; set; } = string.Empty;
+    }
+
+    /// <summary>Response from POST /api/applicationform/fee/proceed  (fee = 0 path)</summary>
+    public class FeeProceedResponse
+    {
+        public bool   Success { get; set; }
+        public string Message { get; set; } = string.Empty;
+    }
+
 }

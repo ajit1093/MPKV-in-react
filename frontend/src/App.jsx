@@ -18,6 +18,10 @@ import Address          from './pages/candidate/Address'
 import Category         from './pages/candidate/Category'
 import Sports           from './pages/candidate/Sports'
 import Qualification    from './pages/candidate/Qualification'
+import Documents        from './pages/candidate/Documents'
+import Fee              from './pages/candidate/Fee'
+import PaymentSuccess   from './pages/candidate/PaymentSuccess'
+import PaymentFailed    from './pages/candidate/PaymentFailed'
 import Shortlist         from './pages/candidate/Shortlist'
 import SetPreferences    from './pages/candidate/SetPreferences'
 import PhotoSign         from './pages/candidate/PhotoSign'
@@ -101,9 +105,13 @@ export default function App() {
         <Route path="/candidate/photo-sign"
           element={<ProtectedRoute><CandidateLayout><PhotoSign /></CandidateLayout></ProtectedRoute>} />
         <Route path="/candidate/documents"
-          element={<ProtectedRoute><CandidateLayout><CandidateComingSoon page="Upload Documents" /></CandidateLayout></ProtectedRoute>} />
+          element={<ProtectedRoute><CandidateLayout><Documents /></CandidateLayout></ProtectedRoute>} />
         <Route path="/candidate/fee"
-          element={<ProtectedRoute><CandidateLayout><CandidateComingSoon page="Fee Payment" /></CandidateLayout></ProtectedRoute>} />
+          element={<ProtectedRoute><CandidateLayout><Fee /></CandidateLayout></ProtectedRoute>} />
+        <Route path="/payment-success"
+          element={<PaymentSuccess />} />
+        <Route path="/payment-failed"
+          element={<PaymentFailed />} />
         <Route path="/candidate/summary"
           element={<ProtectedRoute><CandidateLayout><CandidateComingSoon page="Application Summary" /></CandidateLayout></ProtectedRoute>} />
 

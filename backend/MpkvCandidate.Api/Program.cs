@@ -88,6 +88,8 @@ builder.Services.AddScoped<IHomeService, HomeService>();
 builder.Services.AddScoped<IRegistrationService, RegistrationService>();
 builder.Services.AddScoped<IAccountRecoveryService, AccountRecoveryService>();
 builder.Services.AddScoped<IApplicationFormService, ApplicationFormService>();
+builder.Services.AddScoped<IFeeService, FeeService>();
+builder.Services.AddHttpClient();  // for NSDL API polling in CheckFailedTransactions
 builder.Services.AddScoped<IMessagingService, MessagingService>();
 
 var app = builder.Build();
@@ -100,20 +102,7 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseCors("ReactApp");
-// Serve static files (wwwroot/uploads) with CORS headers so the React frontend
-// on localhost:5173 can load photos and signatures directly from localhost:7001
-app.UseStaticFiles(new StaticFileOptions
-{
-    OnPrepareResponse = ctx =>
-    {
-        var origin = ctx.Context.Request.Headers["Origin"].ToString();
-        if (!string.IsNullOrEmpty(origin))
-        {
-            ctx.Context.Response.Headers["Access-Control-Allow-Origin"]      = origin;
-            ctx.Context.Response.Headers["Access-Control-Allow-Credentials"] = "true";
-        }
-    }
-});
+app.UseStaticFiles();
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();

@@ -46,10 +46,21 @@ namespace MpkvCandidate.Api.Services
         QualificationDetailsResponse  GetQualificationDetails(long candidateId, string userLoginId);
         SaveQualificationResponse     SaveQualificationDetails(long candidateId, string userLoginId, string ipAddress, SaveQualificationRequest request);
 
+        // ── Required Documents ────────────────────────────────────────────────
+        DocumentsListResponse     GetDocumentsList(long candidateId, string userLoginId);
+        Task<UploadDocumentResponse> UploadDocument(long candidateId, string userLoginId, string ipAddress, UploadDocumentRequest request, IFormFile file);
+        DocumentActionResponse    DeleteDocument(long candidateId, string userLoginId, string ipAddress, int documentId);
+        SaveDocumentsResponse     SaveDocuments(long candidateId, string userLoginId, string ipAddress);
+
         // ── Category & Other Reservation ─────────────────────────────────────
         CategoryMastersResponse  GetCategoryMasters();
         CategoryDetailsResponse  GetCategoryDetails(long candidateId, string userLoginId);
         SaveCategoryResponse     SaveCategoryDetails(long candidateId, string userLoginId, string ipAddress, SaveCategoryRequest request);
+
+        // ── Fee Payment ───────────────────────────────────────────────────────
+        FeeDetailsResponse   GetFeeDetails(long candidateId, string userLoginId);
+        FeeInitiateResponse  InitiateFeeTransaction(long candidateId, string userLoginId, string ipAddress, int paymentGatewayId);
+        FeeProceedResponse   SaveFeeDetails(long candidateId, string userLoginId, string ipAddress);
     }
 
     public class ApplicationFormService : IApplicationFormService
@@ -962,8 +973,8 @@ namespace MpkvCandidate.Api.Services
                 if (row["CandidateID"] == DBNull.Value || Convert.ToInt64(row["CandidateID"]) == 0)
                     return response;
                 response.Found            = true;
-                response.PhotoUploadedURL = ExtractBlobUrl(row["PhotoUploadedURL"]?.ToString() ?? "");
-                response.SignUploadedURL  = ExtractBlobUrl(row["SignUploadedURL"]?.ToString()  ?? "");
+                response.PhotoUploadedURL = row["PhotoUploadedURL"]?.ToString() ?? "";
+                response.SignUploadedURL  = row["SignUploadedURL"]?.ToString()  ?? "";
                 response.BothUploaded     = response.PhotoUploadedURL.Length > 0 && response.SignUploadedURL.Length > 0;
             }
             catch (Exception ex) { Console.WriteLine($"GetPhotoSignDetails error: {ex.Message}"); }
@@ -1004,13 +1015,13 @@ namespace MpkvCandidate.Api.Services
                     getParam.Add("@PageCode",    "UploadPhotoAndSign");
                     var existDt = _db.GetDataTable("ApplicationForm_GetPhotoAndSignDetails", getParam);
                     if (existDt != null && existDt.Rows.Count > 0)
-                        existingSign = ExtractBlobUrl(existDt.Rows[0]["SignUploadedURL"]?.ToString() ?? "");
+                        existingSign = existDt.Rows[0]["SignUploadedURL"]?.ToString() ?? "";
                 } catch { /* use empty if fetch fails */ }
 
                 var param = new DynamicParameters();
                 param.Add("@CandidateID",      candidateId);
                 param.Add("@PhotoUploadedURL", url);
-                param.Add("@SignUploadedURL",   existingSign);
+                param.Add("@SignUploadedURL",   existingSign);   // preserve existing sign URL
                 param.Add("@UserLoginID",       userLoginId);
                 param.Add("@IPAddress",         ipAddress);
                 param.Add("@PageCode",          "UploadPhotoAndSign");
@@ -1057,7 +1068,7 @@ namespace MpkvCandidate.Api.Services
                     getParam.Add("@PageCode",    "UploadPhotoAndSign");
                     var existDt = _db.GetDataTable("ApplicationForm_GetPhotoAndSignDetails", getParam);
                     if (existDt != null && existDt.Rows.Count > 0)
-                        existingPhoto = ExtractBlobUrl(existDt.Rows[0]["PhotoUploadedURL"]?.ToString() ?? "");
+                        existingPhoto = existDt.Rows[0]["PhotoUploadedURL"]?.ToString() ?? "";
                 } catch { /* use empty if fetch fails */ }
 
                 var param = new DynamicParameters();
@@ -1104,105 +1115,28 @@ namespace MpkvCandidate.Api.Services
             }
         }
 
-        // ══════════════════════════════════════════════════════════════════════
-        // ExtractBlobUrl — strips the legacy ASP.NET ViewFile.aspx wrapper
-        // that the old project stored around Azure Blob URLs.
-        //
-        // The SP wraps URLs on the way OUT like:
-        //   ../Public/ViewFile.aspx?FileName=Photograph&FileURL=https://blob...jpg
-        //
-        // We need the raw blob URL: https://blobstorage2.blob.core.windows.net/...
-        // This handles double-wrapping too (ViewFile.aspx?...FileURL=ViewFile.aspx?...FileURL=https://...)
-        // ══════════════════════════════════════════════════════════════════════
-        private static string ExtractBlobUrl(string url)
-        {
-            if (string.IsNullOrWhiteSpace(url)) return "";
-
-            // Keep extracting until no more ViewFile.aspx wrapper remains
-            var current = url;
-            while (current.Contains("ViewFile.aspx") && current.Contains("FileURL="))
-            {
-                var idx = current.IndexOf("FileURL=", StringComparison.OrdinalIgnoreCase);
-                if (idx < 0) break;
-                var extracted = current.Substring(idx + "FileURL=".Length);
-                // URL-decode in case it was encoded
-                extracted = Uri.UnescapeDataString(extracted);
-                // Stop if we haven't made progress
-                if (extracted == current) break;
-                current = extracted;
-            }
-
-            return current;
-        }
-
-        // ══════════════════════════════════════════════════════════════════════
-        // UploadToBlob — mirrors Helper.UploadFilesToBlob() from legacy project
-        //
-        // Uploads to Azure Blob Storage (same account/container as old project).
-        // Path inside container: {FileProject}/{subfolder}/{candidateId}_{suffix}_{guid}.{ext}
-        //   e.g. jceceb container → 2026_mpkv_rahuri_uat/photograph/12345_p_abc123.jpg
-        //
-        // Returns full public URL:
-        //   https://blobstorage2.blob.core.windows.net/jceceb/2026_mpkv_rahuri_uat/photograph/12345_p_abc123.jpg
-        //
-        // Falls back to local wwwroot/uploads only when StorageConnectionString is missing.
-        // ══════════════════════════════════════════════════════════════════════
         private async Task<string> UploadToBlob(
             IFormFile file, long candidateId, string subfolder, string suffix)
         {
             try
             {
-                var ext      = Path.GetExtension(file.FileName).ToLower();   // ".jpg"
-                var guid     = Guid.NewGuid().ToString("N");                  // 32-char hex, no dashes
-                var fileName = $"{candidateId}_{suffix}_{guid}{ext}";         // e.g. 12345_p_abc123def456.jpg
+                var ext      = Path.GetExtension(file.FileName).ToLower();
+                var fileName = $"{candidateId}_{suffix}{ext}";
 
-                var storageConn = _config["AzureBlob:StorageConnectionString"] ?? "";
-                var container   = _config["AzureBlob:FileMainContainer"]       ?? "";
-                var fileProject = _config["AzureBlob:FileProject"]             ?? "";
-                var storageUrl  = _config["AzureBlob:StorageURL"]              ?? "";
-
-                // ── Azure Blob upload (always when credentials configured) ────
-                if (!string.IsNullOrWhiteSpace(storageConn) &&
-                    !string.IsNullOrWhiteSpace(container)   &&
-                    !string.IsNullOrWhiteSpace(fileProject) &&
-                    !string.IsNullOrWhiteSpace(storageUrl))
-                {
-                    // Blob path mirrors legacy dicContainers: {fileProject}/{subfolder}/{filename}
-                    var blobPath = $"{fileProject}/{subfolder}/{fileName}";
-
-                    var blobServiceClient = new BlobServiceClient(storageConn);
-                    var containerClient   = blobServiceClient.GetBlobContainerClient(container.ToLower());
-                    await containerClient.CreateIfNotExistsAsync();
-
-                    var blobClient = containerClient.GetBlobClient(blobPath);
-                    using (var ms = new MemoryStream())
-                    {
-                        await file.CopyToAsync(ms);
-                        ms.Position = 0;
-                        await blobClient.UploadAsync(ms, overwrite: true);
-                    }
-
-                    // Full URL — same format as legacy cloudBlockBlob.Uri.ToString()
-                    var url = $"{storageUrl.TrimEnd('/')}/{container.ToLower()}/{blobPath}";
-                    Console.WriteLine($"[UploadToBlob] Azure → {url}");
-                    return url;
-                }
-
-                // ── Local fallback (only when Azure config is absent) ─────────
-                var folder   = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "uploads", subfolder);
+                var folder = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "uploads", subfolder);
                 Directory.CreateDirectory(folder);
+
                 var filePath = Path.Combine(folder, fileName);
-                using (var stream = new FileStream(filePath, FileMode.Create, FileAccess.Write))
-                {
-                    await file.CopyToAsync(stream);
-                }
-                var localUrl = $"/uploads/{subfolder}/{fileName}";
-                Console.WriteLine($"[UploadToBlob] Local fallback → {localUrl}");
-                return localUrl;
+                using var stream = new FileStream(filePath, FileMode.Create, FileAccess.Write);
+                await file.CopyToAsync(stream);
+
+                var url = $"/uploads/{subfolder}/{fileName}";
+                Console.WriteLine($"File saved: {filePath}  →  URL: {url}");
+                return url;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[UploadToBlob] Error: {ex.Message}");
+                Console.WriteLine($"UploadToBlob error: {ex.Message}");
                 return "";
             }
         }
@@ -1370,6 +1304,388 @@ namespace MpkvCandidate.Api.Services
             catch (Exception ex)
             {
                 return new SaveQualificationResponse { Success = false, Message = ex.Message };
+            }
+        }
+
+        // ══════════════════════════════════════════════════════════════════════
+        // REQUIRED DOCUMENTS — list
+        // GET /api/applicationform/documents
+        // SP: ApplicationForm_GetRequiredDocumentsList
+        // Returns: DocumentID, DocumentName, IsCompulsory, DocumentUploadedURL,
+        //          FileTypesAllowed, MaxFileSizeAllowed, IsAllCompulsoryDocumentsUploaded
+        // ══════════════════════════════════════════════════════════════════════
+        public DocumentsListResponse GetDocumentsList(long candidateId, string userLoginId)
+        {
+            var response = new DocumentsListResponse();
+            try
+            {
+                var param = new DynamicParameters();
+                param.Add("@CandidateID", candidateId);
+                param.Add("@UserLoginID", userLoginId);
+                param.Add("@PageCode",    "UploadRequiredDocuments");
+                var dt = _db.GetDataTable("ApplicationForm_GetRequiredDocumentsList", param);
+                if (dt == null) return response;
+
+                // DocumentIDs that do NOT require DocumentNo+IssueDate (same as old aspx JS logic)
+                var noDetailsRequired = new HashSet<int> { 1, 2, 4, 14, 15, 19, 21, 24 };
+
+                // Helper to safely get column value
+                bool HasCol(string name) => dt.Columns.Contains(name);
+
+                foreach (System.Data.DataRow row in dt.Rows)
+                {
+                    var docId = HasCol("DocumentID") && row["DocumentID"] != DBNull.Value
+                        ? Convert.ToInt32(row["DocumentID"]) : 0;
+
+                    var dto = new RequiredDocumentDto
+                    {
+                        DocumentID          = docId,
+                        DocumentName        = HasCol("DocumentName")       ? row["DocumentName"]?.ToString()        ?? "" : "",
+                        IsCompulsory        = HasCol("IsCompulsory")       && row["IsCompulsory"] != DBNull.Value
+                            ? Convert.ToInt16(row["IsCompulsory"]) : (short)0,
+                        DocumentUploadedURL = HasCol("DocumentUploadedURL") ? row["DocumentUploadedURL"]?.ToString() ?? "" : "",
+                        FileTypesAllowed    = HasCol("FileTypesAllowed")    ? row["FileTypesAllowed"]?.ToString()    ?? "pdf" : "pdf",
+                        MaxFileSizeAllowed  = HasCol("MaxFileSizeAllowed")  && row["MaxFileSizeAllowed"] != DBNull.Value
+                            ? Convert.ToInt32(row["MaxFileSizeAllowed"]) : 1024,
+                        IsAllCompulsoryDocumentsUploaded = HasCol("IsAllCompulsoryDocumentsUploaded") && row["IsAllCompulsoryDocumentsUploaded"] != DBNull.Value
+                            ? Convert.ToInt16(row["IsAllCompulsoryDocumentsUploaded"]) : (short)0,
+                        RequiresDocumentDetails = !noDetailsRequired.Contains(docId)
+                    };
+                    response.Documents.Add(dto);
+                }
+
+                response.TotalMandatory        = response.Documents.Count(d => d.IsCompulsory == 1);
+                response.UploadedMandatory      = response.Documents.Count(d => d.IsCompulsory == 1 && d.DocumentUploadedURL.Length > 0);
+                // AllCompulsoryUploaded: true when every doc has IsAllCompulsoryDocumentsUploaded=1
+                // OR when there are no mandatory docs (matches old btnProceed.Enabled logic)
+                response.AllCompulsoryUploaded  = response.TotalMandatory == 0
+                    || !response.Documents.Any(d => d.IsCompulsory == 1 && d.DocumentUploadedURL.Length == 0);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"GetDocumentsList error: {ex.Message}");
+                // Re-throw so controller returns 500 with the real error message
+                throw;
+            }
+            return response;
+        }
+
+        // ══════════════════════════════════════════════════════════════════════
+        // REQUIRED DOCUMENTS — upload
+        // POST /api/applicationform/documents/upload  (multipart)
+        // Mirrors: ManageDocumentUpload()
+        // File saved: wwwroot/uploads/documents/{candidateId}_{documentId}.{ext}
+        // SP: ApplicationForm_SaveRequiredDocumentUploadStatus  Action="U"
+        // ══════════════════════════════════════════════════════════════════════
+        public async Task<UploadDocumentResponse> UploadDocument(
+            long candidateId, string userLoginId, string ipAddress,
+            UploadDocumentRequest request, IFormFile file)
+        {
+            try
+            {
+                if (request.DocumentID <= 0)
+                    return new UploadDocumentResponse { Success = false, Message = "Invalid document." };
+
+                // Get document config from DB to validate type + size
+                var docList = GetDocumentsList(candidateId, userLoginId);
+                var doc = docList.Documents.FirstOrDefault(d => d.DocumentID == request.DocumentID);
+
+                if (doc == null)
+                    return new UploadDocumentResponse { Success = false, Message = "Document not found." };
+
+                // Validate file extension
+                var ext       = Path.GetExtension(file.FileName).ToLower().TrimStart('.');
+                var allowedArr = doc.FileTypesAllowed.ToLower()
+                                    .Split(new[] { ',', ' ', '.', ';' }, StringSplitOptions.RemoveEmptyEntries);
+                if (!allowedArr.Contains(ext))
+                    return new UploadDocumentResponse
+                    {
+                        Success = false,
+                        Message = $"Only {doc.FileTypesAllowed} files are allowed."
+                    };
+
+                // Validate file size (MaxFileSizeAllowed is in KB)
+                if (file.Length > (long)doc.MaxFileSizeAllowed * 1024)
+                    return new UploadDocumentResponse
+                    {
+                        Success = false,
+                        Message = $"Maximum file size allowed is {doc.MaxFileSizeAllowed} KB."
+                    };
+
+                // Save file — filename: {candidateId}_{documentId}.{ext}
+                var fileName = $"{candidateId}_{request.DocumentID}.{ext}";
+                var folder   = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "uploads", "documents");
+                Directory.CreateDirectory(folder);
+                var filePath = Path.Combine(folder, fileName);
+                using (var stream = new FileStream(filePath, FileMode.Create, FileAccess.Write))
+                    await file.CopyToAsync(stream);
+
+                var url = $"/uploads/documents/{fileName}";
+
+                // Parse DocumentIssueDate is now handled inside the param block below
+
+                var param = new DynamicParameters();
+                param.Add("@CandidateID",         candidateId);
+                param.Add("@DocumentID",          request.DocumentID);
+                param.Add("@DocumentUploadedURL", url);
+                param.Add("@DocumentNo",          request.DocumentNo?.Trim().ToUpper() ?? "");
+                
+                // Parse and add DocumentIssueDate — Dapper handles null DateTime? automatically
+                DateTime? issueDate = null;
+                if (!string.IsNullOrWhiteSpace(request.DocumentIssueDate))
+                {
+                    if (DateTime.TryParseExact(request.DocumentIssueDate.Trim(),
+                        new[] { "dd/MM/yyyy", "yyyy-MM-dd" },
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.None, out var parsedDate))
+                        issueDate = parsedDate;
+                }
+                param.Add("@DocumentIssueDate", issueDate);  // Let Dapper infer the type
+                
+                param.Add("@Action",              "U");
+                param.Add("@UserLoginID",         userLoginId);
+                param.Add("@IPAddress",           ipAddress);
+                param.Add("@PageCode",            "UploadRequiredDocuments");
+
+                var result = _db.ExecuteScalar("ApplicationForm_SaveRequiredDocumentUploadStatus", param)?.ToString() ?? "";
+                Console.WriteLine($"[UploadDocument] SP result: [{result}]");
+                // Always return success if file saved
+                return new UploadDocumentResponse { Success = true, Message = "Document Uploaded Successfully.", UploadedURL = url };
+            }
+            catch (Exception ex)
+            {
+                return new UploadDocumentResponse { Success = false, Message = ex.Message };
+            }
+        }
+
+        // ══════════════════════════════════════════════════════════════════════
+        // REQUIRED DOCUMENTS — delete
+        // DELETE /api/applicationform/documents/delete
+        // Mirrors: gvRequiredDocuments_RowCommand CommandName="D"
+        // SP: ApplicationForm_SaveRequiredDocumentUploadStatus  Action="D"
+        // ══════════════════════════════════════════════════════════════════════
+        public DocumentActionResponse DeleteDocument(
+            long candidateId, string userLoginId, string ipAddress, int documentId)
+        {
+            try
+            {
+                var param = new DynamicParameters();
+                param.Add("@CandidateID",         candidateId);
+                param.Add("@DocumentID",          documentId);
+                param.Add("@DocumentUploadedURL", "");
+                param.Add("@DocumentNo",          "");
+                param.Add("@DocumentIssueDate",   (DateTime?)null);  // Let Dapper infer type
+                param.Add("@Action",              "D");
+                param.Add("@UserLoginID",         userLoginId);
+                param.Add("@IPAddress",           ipAddress);
+                param.Add("@PageCode",            "UploadRequiredDocuments");
+
+                var result = _db.ExecuteScalar("ApplicationForm_SaveRequiredDocumentUploadStatus", param)?.ToString() ?? "";
+                Console.WriteLine($"[DeleteDocument] SP result: [{result}]");
+                return new DocumentActionResponse { Success = true, Message = "Document Deleted Successfully." };
+            }
+            catch (Exception ex)
+            {
+                return new DocumentActionResponse { Success = false, Message = ex.Message };
+            }
+        }
+
+        // ══════════════════════════════════════════════════════════════════════
+        // REQUIRED DOCUMENTS — save step complete (Proceed)
+        // POST /api/applicationform/documents/save
+        // Mirrors: btnProceed_Click → SaveRequiredDocuments()
+        // SP: ApplicationForm_SaveRequiredDocumentsDetails
+        // ══════════════════════════════════════════════════════════════════════
+        public SaveDocumentsResponse SaveDocuments(long candidateId, string userLoginId, string ipAddress)
+        {
+            try
+            {
+                var param = new DynamicParameters();
+                param.Add("@CandidateID", candidateId);
+                param.Add("@UserLoginID", userLoginId);
+                param.Add("@IPAddress",   ipAddress);
+                param.Add("@PageCode",    "UploadRequiredDocuments");
+
+                var result = _db.ExecuteScalar("ApplicationForm_SaveRequiredDocumentsDetails", param)?.ToString() ?? "";
+                if (result.ToUpper() == "Y")
+                    return new SaveDocumentsResponse { Success = true, Message = "Documents saved successfully." };
+                return new SaveDocumentsResponse { Success = false, Message = result.Length > 0 ? result : "Failed to save." };
+            }
+            catch (Exception ex)
+            {
+                return new SaveDocumentsResponse { Success = false, Message = ex.Message };
+            }
+        }
+
+        // ══════════════════════════════════════════════════════════════════════
+        // FEE — GET details
+        // GET /api/applicationform/fee
+        // Mirrors: GetApplicationFee() in PayApplicationFee.aspx.cs
+        // SP: ApplicationForm_GetApplicationFeeDetails
+        // Returns: candidate summary + FeeToBePaid + RemainingFee + PhaseID
+        //          + list of payment gateways from Global.MasterPaymentGateway
+        // ══════════════════════════════════════════════════════════════════════
+        public FeeDetailsResponse GetFeeDetails(long candidateId, string userLoginId)
+        {
+            try
+            {
+                var param = new DynamicParameters();
+                param.Add("@CandidateID", candidateId);
+                param.Add("@UserLoginID", userLoginId);
+                param.Add("@PageCode",    "PayApplicationFee");
+
+                var dt = _db.GetDataTable("ApplicationForm_GetApplicationFeeDetails", param);
+                if (dt == null || dt.Rows.Count == 0)
+                    return new FeeDetailsResponse { Success = false, Message = "Fee details not found." };
+
+                var row    = dt.Rows[0];
+                bool HasCol(string n) => dt.Columns.Contains(n);
+
+                var fee = new ApplicationFeeDto
+                {
+                    CandidateID    = candidateId,
+                    ApplicationID  = HasCol("ApplicationID")  ? row["ApplicationID"]?.ToString()  ?? "" : "",
+                    CandidateName  = HasCol("CandidateName")  ? row["CandidateName"]?.ToString()  ?? "" : "",
+                    AppliedCourse  = HasCol("AppliedCourse")  ? row["AppliedCourse"]?.ToString()  ?? "" : "",
+                    Gender         = HasCol("Gender")         ? row["Gender"]?.ToString()         ?? "" : "",
+                    Category       = HasCol("Category")       ? row["Category"]?.ToString()       ?? "" : "",
+                    IsPWD          = HasCol("IsPWD")          ? row["IsPWD"]?.ToString()          ?? "" : "",
+                    FeeToBePaid    = HasCol("FeeToBePaid")    && row["FeeToBePaid"]    != DBNull.Value ? Convert.ToInt32(row["FeeToBePaid"])    : 0,
+                    FeeAlreadyPaid = HasCol("FeeAlreadyPaid") && row["FeeAlreadyPaid"] != DBNull.Value ? Convert.ToInt32(row["FeeAlreadyPaid"]) : 0,
+                    RemainingFee   = HasCol("RemainingFee")   && row["RemainingFee"]   != DBNull.Value ? Convert.ToInt32(row["RemainingFee"])   : 0,
+                    PhaseID        = HasCol("PhaseID")        && row["PhaseID"]        != DBNull.Value ? Convert.ToInt32(row["PhaseID"])        : 0,
+                    Purpose        = HasCol("Purpose")        ? row["Purpose"]?.ToString()        ?? "" : "",
+                };
+
+                // Load payment gateways from master table
+                // SP: Master_GetPaymentGateways (fallback: manual list)
+                try
+                {
+                    var gwDt = _db.GetDataTable("Master_GetPaymentGateways", new DynamicParameters());
+                    if (gwDt != null)
+                    {
+                        foreach (System.Data.DataRow gw in gwDt.Rows)
+                        {
+                            fee.PaymentGateways.Add(new PaymentGatewayOption
+                            {
+                                PaymentGatewayID   = gw["PaymentGatewayID"] != DBNull.Value ? Convert.ToInt32(gw["PaymentGatewayID"]) : 0,
+                                PaymentGatewayName = gw["PaymentGatewayName"]?.ToString() ?? ""
+                            });
+                        }
+                    }
+                }
+                catch
+                {
+                    // Gateway master table unavailable — use defaults matching old project
+                    fee.PaymentGateways = new List<PaymentGatewayOption>
+                    {
+                        new PaymentGatewayOption { PaymentGatewayID = 1, PaymentGatewayName = "NSDL" },
+                        new PaymentGatewayOption { PaymentGatewayID = 2, PaymentGatewayName = "BillDesk" }
+                    };
+                }
+
+                return new FeeDetailsResponse { Success = true, Fee = fee };
+            }
+            catch (Exception ex)
+            {
+                return new FeeDetailsResponse { Success = false, Message = ex.Message };
+            }
+        }
+
+        // ══════════════════════════════════════════════════════════════════════
+        // FEE — initiate transaction (fee > 0 path)
+        // POST /api/applicationform/fee/initiate
+        // Mirrors: btnPay_Click → FeeWorker.SetFeeTransaction()
+        // SP: Fee_SetFeeTransaction
+        // Returns: TransactionID + PaymentGatewayURL for redirect
+        // ══════════════════════════════════════════════════════════════════════
+        public FeeInitiateResponse InitiateFeeTransaction(long candidateId, string userLoginId, string ipAddress, int paymentGatewayId)
+        {
+            try
+            {
+                // Get fee details first to retrieve PhaseID
+                var feeDetails = GetFeeDetails(candidateId, userLoginId);
+                if (!feeDetails.Success)
+                    return new FeeInitiateResponse { Success = false, Message = feeDetails.Message };
+
+                var phaseId = feeDetails.Fee.PhaseID;
+                if (phaseId <= 0)
+                    return new FeeInitiateResponse { Success = false, Message = "Invalid Phase. Please refresh and try again." };
+
+                if (paymentGatewayId <= 0)
+                    return new FeeInitiateResponse { Success = false, Message = "Please select a payment gateway." };
+
+                if (feeDetails.Fee.RemainingFee <= 0)
+                    return new FeeInitiateResponse { Success = false, Message = "No remaining fee to pay." };
+
+                var param = new DynamicParameters();
+                param.Add("@PayeeID",          candidateId);
+                param.Add("@PhaseID",          phaseId);
+                param.Add("@PaymentGatewayID", paymentGatewayId);
+                param.Add("@UserLoginID",      userLoginId);
+                param.Add("@IPAddress",        ipAddress);
+
+                var dt = _db.GetDataTable("Fee_SetFeeTransaction", param);
+                if (dt == null || dt.Rows.Count == 0)
+                    return new FeeInitiateResponse { Success = false, Message = "Failed to initiate transaction." };
+
+                var row = dt.Rows[0];
+                bool HasCol(string n) => dt.Columns.Contains(n);
+
+                var successFlag = HasCol("SuccessFlag") ? row["SuccessFlag"]?.ToString() ?? "" : "";
+                var errorMsg    = HasCol("ErrorMessage") ? row["ErrorMessage"]?.ToString() ?? "" : "";
+
+                if (successFlag.ToUpper() != "Y")
+                    return new FeeInitiateResponse { Success = false, Message = errorMsg.Length > 0 ? errorMsg : "Transaction initiation failed." };
+
+                var transactionId = HasCol("TransactionID") && row["TransactionID"] != DBNull.Value
+                    ? Convert.ToInt64(row["TransactionID"]) : 0;
+                var gatewayUrl = HasCol("PaymentGatewayURL") ? row["PaymentGatewayURL"]?.ToString() ?? "" : "";
+
+                if (transactionId <= 0)
+                    return new FeeInitiateResponse { Success = false, Message = "Invalid transaction ID returned." };
+
+                // Build full redirect URL — mirrors: entity.PaymentGatewayURL + "?T1=" + TransactionID + "&T2=" + TransactionID.GetHashCode()
+                var redirectUrl = $"{gatewayUrl}?T1={transactionId}&T2={transactionId.GetHashCode()}";
+
+                return new FeeInitiateResponse
+                {
+                    Success           = true,
+                    Message           = "Transaction initiated successfully.",
+                    TransactionID     = transactionId,
+                    PaymentGatewayURL = redirectUrl
+                };
+            }
+            catch (Exception ex)
+            {
+                return new FeeInitiateResponse { Success = false, Message = ex.Message };
+            }
+        }
+
+        // ══════════════════════════════════════════════════════════════════════
+        // FEE — save/proceed (fee = 0 path or already paid)
+        // POST /api/applicationform/fee/proceed
+        // Mirrors: btnProceed_Click → ApplicationFeeWorker.SaveApplicationFeeDetails()
+        // SP: ApplicationForm_SaveApplicationFeeDetails
+        // ══════════════════════════════════════════════════════════════════════
+        public FeeProceedResponse SaveFeeDetails(long candidateId, string userLoginId, string ipAddress)
+        {
+            try
+            {
+                var param = new DynamicParameters();
+                param.Add("@CandidateID", candidateId);
+                param.Add("@UserLoginID", userLoginId);
+                param.Add("@IPAddress",   ipAddress);
+                param.Add("@PageCode",    "PayApplicationFee");
+
+                var result = _db.ExecuteScalar("ApplicationForm_SaveApplicationFeeDetails", param)?.ToString() ?? "";
+                if (result.ToUpper() == "Y")
+                    return new FeeProceedResponse { Success = true, Message = "Fee details saved successfully." };
+                return new FeeProceedResponse { Success = false, Message = result.Length > 0 ? result : "Failed to save fee details." };
+            }
+            catch (Exception ex)
+            {
+                return new FeeProceedResponse { Success = false, Message = ex.Message };
             }
         }
     }

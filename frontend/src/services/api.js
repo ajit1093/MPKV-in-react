@@ -108,6 +108,32 @@ export const applicationFormApi = {
   getQualificationMasters: ()     => api.get('/applicationform/masters/qualification'),
   getQualification       : ()     => api.get('/applicationform/qualification'),
   saveQualification      : (data) => api.post('/applicationform/qualification', data),
+
+  // Required Documents
+  getDocuments     : ()                          => api.get('/applicationform/documents'),
+  uploadDocument   : (documentId, documentNo, documentIssueDate, file) => {
+    const fd = new FormData()
+    fd.append('documentId',       documentId)
+    fd.append('documentNo',       documentNo        || '')
+    fd.append('documentIssueDate',documentIssueDate || '')
+    fd.append('file', file)
+    return api.post('/applicationform/documents/upload', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
+  },
+  deleteDocument   : (documentId)               => api.delete(`/applicationform/documents/delete/${documentId}`),
+  saveDocuments    : ()                          => api.post('/applicationform/documents/save'),
+
+  // Fee Payment
+  getFeeDetails    : ()                          => api.get('/applicationform/fee'),
+  initiateFee      : (paymentGatewayID)          => api.post('/applicationform/fee/initiate', { paymentGatewayID }),
+  proceedFee       : ()                          => api.post('/applicationform/fee/proceed'),
+}
+
+// ── Fee gateway verification (public — no JWT needed) ─────────────────────────
+export const feeApi = {
+  getPaymentSuccess: (txId, refNo, amount) =>
+    api.get(`/fee/payment-success?txId=${txId}&refNo=${encodeURIComponent(refNo ?? '')}&amount=${amount ?? 0}`),
+  getPaymentFailed: (msg) =>
+    api.get(`/fee/payment-failed?msg=${encodeURIComponent(msg ?? '')}`),
 }
 
 // ── Account Recovery endpoints ────────────────────────────────────────────────
